@@ -76,6 +76,9 @@ public struct ParamDecl: Decl {
   /// The name of the parameter.
   public var name: String
 
+  /// The mutability of the binding.
+  public var mutability: MutabilityQualifier
+
   /// The type signature of the parameter.
   public var sign: Sign
 
@@ -83,8 +86,9 @@ public struct ParamDecl: Decl {
 
   public var type: Type?
 
-  public init(name: String, sign: Sign, range: SourceRange) {
+  public init(name: String, mutability: MutabilityQualifier = .let, sign: Sign, range: SourceRange) {
     self.name = name
+    self.mutability = mutability
     self.sign = sign
     self.range = range
   }

@@ -1,6 +1,24 @@
 import AST
 import Basic
 
+private let pairStructType: Type = .struct(
+  name: "Pair",
+  props: [
+    .init(mutability: .let, name: "first", type: .float),
+    .init(mutability: .let, name: "second", type: .float),
+  ]
+)
+private let unaryFloatFunctionType: Type = .func(params: [.float], output: .float)
+private let binaryFloatFunctionType: Type = .func(params: [.float, .float], output: .float)
+private let unaryFloatFunctionTypeGradient: Type = .func(
+  params: [.float],
+  output: .float
+)
+private let binaryFloatFunctionTypeGradient: Type = .func(
+  params: [.float, .float],
+  output: pairStructType
+)
+
 public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
   public typealias DeclResult = Bool
@@ -12,7 +30,21 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   private var delta: [String: Type] = [:]
 
   /// The typing context Γ.
-  private var gamma: [String: PathResult] = [:]
+  private var gamma: [String: PathResult] = [
+    "add": (mutability: .let, type: binaryFloatFunctionType),
+    "sub": (mutability: .let, type: binaryFloatFunctionType),
+    "mul": (mutability: .let, type: binaryFloatFunctionType),
+    /*
+    "gradient": (mutability: .let,
+                 type: .func(params: [unaryFloatFunctionType], output: unaryFloatFunctionTypeGradient)),
+    "gradient2": (mutability: .let,
+                 type: .func(params: [binaryFloatFunctionType], output: binaryFloatFunctionTypeGradient)),
+    */
+    "gradient": (mutability: .let,
+                 type: .func(params: [unaryFloatFunctionType, .float], output: .float)),
+    "gradient2": (mutability: .let,
+                  type: .func(params: [binaryFloatFunctionType, .float, .float], output: pairStructType)),
+  ]
 
   /// The expected type of the next expression to visit.
   private var expectedType: Type?
@@ -143,7 +175,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
 
     // Determine the expected type of each array element.
     var expectedElemType: Type?
-    if case .array(let elemType) = expected {
+    if case .array(let elemType, _) = expected {
       expectedElemType = elemType
     } else {
       expectedElemType = nil
@@ -161,7 +193,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     }
 
     // Make sure the type we inferred is the same type as what was expected.
-    expr.type = Type.array(elem: expectedElemType ?? .error)
+    expr.type = Type.array(elem: expectedElemType ?? .error, count: expr.elems.count)
     guard (expected == nil) || (expected == expr.type) else {
       diagConsumer.consume(
         .typeError(expected: expected!, actual: expr.type!, range: expr.range))
@@ -462,6 +494,10 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     return isWellTyped
   }
 
+  public mutating func visit(_ expr: inout GradientExpr) -> Bool {
+    fatalError()
+  }
+
   public mutating func visit(_ expr: inout ErrorExpr) -> Bool {
     return false
   }
@@ -542,9 +578,11 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   public mutating func visit(path: inout ElemPath) -> PathResult {
     expectedType = expectedType.map({
       if case .inout(let baseType) = $0 {
-        return .inout(base: .array(elem: baseType))
+        // FIXME: Use proper array type count here.
+        return .inout(base: .array(elem: baseType, count: -1))
       } else {
-        return .array(elem: $0)
+        // FIXME: Use proper array type count here.
+        return .array(elem: $0, count: -1)
       }
     })
 
@@ -555,7 +593,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       let (pathBaseMut, pathBaseType) = base.accept(pathVisitor: &self)
       path.base = base
 
-      if case .array(let elemType) = pathBaseType {
+      if case .array(let elemType, _) = pathBaseType {
         pathMut = pathBaseMut
         path.type = elemType
       } else {
@@ -566,7 +604,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
     } else if path.base.accept(&self) {
       // The base is an expression, for which type checking succeeded.
       pathMut = .let
-      if case .array(let elemType) = path.base.type {
+      if case .array(let elemType, _) = path.base.type {
         path.type = elemType
       } else {
         diagConsumer.consume(.indexingInNonArrayType(path.base.type!, range: path.range))
@@ -645,7 +683,7 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
   }
 
   public mutating func visit(_ sign: inout ArraySign) -> Type {
-    return .array(elem: sign.base.accept(&self))
+    return .array(elem: sign.base.accept(&self), count: sign.count)
   }
 
   public mutating func visit(_ sign: inout FuncSign) -> Type {
@@ -654,8 +692,9 @@ public struct TypeChecker: DeclVisitor, ExprVisitor, PathVisitor, SignVisitor {
       paramTypes.append(sign.params[i].accept(&self))
     }
     let outputType = sign.output.accept(&self)
-
-    return .func(params: paramTypes, output: outputType)
+    let functionType: Type = .func(params: paramTypes, output: outputType)
+    sign.type = functionType
+    return functionType
   }
 
   public mutating func visit(_ sign: inout InoutSign) -> Type {

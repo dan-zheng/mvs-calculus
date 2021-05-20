@@ -3,6 +3,6 @@ struct Pair {
   var y: Int
 } in
 var p: Pair = Pair(2, 4) in
-var q: Pair = p in
+let q: Pair = p in
 q.x = 8 in
 p

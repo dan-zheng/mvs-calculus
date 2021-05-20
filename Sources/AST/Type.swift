@@ -1,6 +1,9 @@
 /// A semantic type.
 public indirect enum Type: Hashable {
 
+  /// The built-in unit type.
+  case unit
+
   /// The built-in integer type (a.k.a. `Int`).
   case int
 
@@ -13,7 +16,8 @@ public indirect enum Type: Hashable {
   /// An array type.
   ///
   /// - Parameter elem: The type of each element.
-  case array(elem: Type)
+  /// - Parameter count: The array length.
+  case array(elem: Type, count: Int)
 
   /// A function type.
   case `func`(params: [Type], output: Type)
@@ -41,7 +45,7 @@ public indirect enum Type: Hashable {
     switch self {
     case .struct(_, let props):
       return props.contains(where: { prop in prop.type.hasError })
-    case .array(let elem):
+    case .array(let elem, _):
       return elem.hasError
     case .func(let params, let output):
       return params.contains(where: { param in param.hasError }) || output.hasError
@@ -56,16 +60,23 @@ public indirect enum Type: Hashable {
 
 }
 
+extension Type {
+  public var isUnit: Bool {
+    self == .unit
+  }
+}
+
 extension Type: CustomStringConvertible {
 
   public var description: String {
     switch self {
-    case .int                 : return "Int"
-    case .float               : return "Float"
-    case .struct(let name, _) : return name
-    case .array(let elem)     : return "[\(elem)]"
-    case .inout(let base)     : return "&\(base)"
-    case .error               : return "<error>"
+    case .unit                      : return "()"
+    case .int                       : return "Int"
+    case .float                     : return "Float"
+    case .struct(let name, _)       : return name
+    case .array(let elem, let count): return "[\(elem),\(count)]"
+    case .inout(let base)           : return "&\(base)"
+    case .error                     : return "<error>"
 
     case .func(let params, let output):
       let p = params.map(String.init(describing:)).joined(separator: ", ")

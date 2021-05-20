@@ -7,7 +7,7 @@ let package = Package(
     .macOS(.v11)
   ],
   products: [
-    .executable(name: "mvs", targets: ["Driver"]),
+    .executable(name: "mvs", targets: ["Driver"])
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "0.4.0"),
@@ -18,17 +18,19 @@ let package = Package(
     .target(
       name: "Driver",
       dependencies: [
-        "AST", "CodeGen", "Parse", "Sema",
+        "AST", "Autodiff", "CodeGen", "Parse", "Sema",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ]
     ),
 
     .target(name: "AST", dependencies: ["Basic"]),
+    .target(
+      name: "Autodiff",
+      dependencies: ["AST", "Basic"]),
     .target(name: "Basic"),
     .target(name: "CodeGen", dependencies: ["AST", "Basic", "LLVM"]),
     .target(name: "Parse", dependencies: ["AST", "Basic", "Diesel"]),
     .target(name: "Sema", dependencies: ["AST", "Basic"]),
-
     .testTarget(
       name: "MVSTests",
       dependencies: ["AST", "CodeGen", "LLVM", "Parse", "Sema"],

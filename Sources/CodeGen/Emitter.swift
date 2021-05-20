@@ -37,6 +37,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   var module: Module { builder.module }
 
   /// The local bindings.
+  /// FIXME: Need to update to handle intrinsic functions.
   var bindings: [String: IRValue] = [:]
 
   /// The metatypes of user-defined structures.
@@ -151,7 +152,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// - Parameters:
   ///   - program: The program for which LLVM IR is generated.
   ///   - name: The name of the module (default: `main`).
-  public mutating func emit(program: inout Program, name: String = "main") throws -> Module {
+  public mutating func emit(program: inout Program, name: String = "main", optimize: Bool = false) throws -> Module {
     builder   = IRBuilder(module: Module(name: name))
     bindings  = [:]
     metatypes = [:]
@@ -243,7 +244,9 @@ public struct Emitter: ExprVisitor, PathVisitor {
     }
 
     let pipeliner = PassPipeliner(module: module)
-    pipeliner.addStandardModulePipeline("opt", optimization: .default, size: .default)
+    if optimize {
+      pipeliner.addStandardModulePipeline("opt", optimization: .default, size: .default)
+    }
     pipeliner.execute()
 
     return module
@@ -473,7 +476,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
 
   private func emit(metatypeForArrayOf elemType: Type) -> Global {
     // Mangle the type of the array to create a name prefix.
-    let prefix = "_" + Type.array(elem: elemType).mangled
+    // FIXME: Use proper array type count here.
+    let prefix = "_" + Type.array(elem: elemType, count: 0).mangled
 
     // Check if we already build this metatype.
     if let global = module.global(named: "\(prefix).Type") {
@@ -515,7 +519,8 @@ public struct Emitter: ExprVisitor, PathVisitor {
       builder.positionAtEnd(of: copyFn.appendBasicBlock(named: "entry"))
       let lhs = builder.buildBitCast(copyFn.parameters[0], type: anyArrayType.ptr)
       let rhs = builder.buildBitCast(copyFn.parameters[1], type: anyArrayType.ptr)
-      emit(copy: rhs, type: .array(elem: elemType), to: lhs)
+      // FIXME: Use proper array type count here.
+      emit(copy: rhs, type: .array(elem: elemType, count: 0), to: lhs)
       builder.buildRetVoid()
     }
 
@@ -862,7 +867,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// Drops the given value.
   func emit(drop val: IRValue, type: Type) {
     switch type {
-    case .array(let elemType):
+    case .array(let elemType, _):
       _ = builder.buildCall(runtime.arrayDrop, args: [val, metatype(of: elemType)])
 
     case .func:
@@ -981,7 +986,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       let eq = builder.buildCall(fn, args: [lhs, rhs])
       return builder.buildTrunc(eq, type: IntType.int1)
 
-    case .array(let elemType):
+    case .array(let elemType, _):
       let eq = builder.buildCall(runtime.arrayEqual, args: [lhs, rhs, metatype(of: elemType)])
       return builder.buildTrunc(eq, type: IntType.int1)
 
@@ -1083,7 +1088,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(_ expr: inout ArrayExpr) -> IRValue {
-    guard case .array(let elemType) = expr.type else { unreachable() }
+    guard case .array(let elemType, _) = expr.type else { unreachable() }
     let elemIRType = lower(elemType)
     let elemIRTypePtr = elemIRType.ptr
 
@@ -1418,6 +1423,10 @@ public struct Emitter: ExprVisitor, PathVisitor {
     return expr.body.accept(&self)
   }
 
+  public mutating func visit(_ expr: inout GradientExpr) -> IRValue {
+    fatalError("Unsupported expression: \(expr)")
+  }
+
   public mutating func visit(_ expr: inout ErrorExpr) -> IRValue {
     fatalError()
   }
@@ -1468,7 +1477,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(path: inout ElemPath) -> PathResult {
-    guard case .array(let elemType) = path.base.type else { unreachable() }
+    guard case .array(let elemType, _) = path.base.type else { unreachable() }
     let elemIRType = lower(elemType)
     let elemIRTypePtr = elemIRType.ptr
 
@@ -1616,7 +1625,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
   /// - Parameter type: A MVS semantic type to lower.
   private func lower(_ type: Type) -> IRType {
     switch type {
-    case .int:
+    case .unit, .int:
       return IntType.int64
     case .float:
       return FloatType.double
@@ -1644,7 +1653,7 @@ public struct Emitter: ExprVisitor, PathVisitor {
       return floatMetatype
     case .struct(let name, _):
       return metatypes[name]!
-    case .array(let elemType):
+    case .array(let elemType, _):
       return emit(metatypeForArrayOf: elemType)
     case .func:
       return closureMetatype

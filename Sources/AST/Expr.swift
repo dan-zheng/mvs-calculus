@@ -1,7 +1,8 @@
 import Basic
 
 /// An expression.
-public protocol Expr {
+// public protocol Expr {
+public protocol Expr: CustomStringConvertible {
 
   /// The range of the expression in the input source.
   var range: SourceRange { get }
@@ -339,6 +340,27 @@ public struct AssignExpr: Expr {
     self.lvalue = lvalue
     self.rvalue = rvalue
     self.body = body
+    self.range = range
+  }
+
+  public mutating func accept<V>(_ visitor: inout V) -> V.ExprResult where V: ExprVisitor {
+    visitor.visit(&self)
+  }
+
+}
+
+/// A gradient expression.
+public struct GradientExpr: Expr {
+
+  /// The operand.
+  public var operand: Expr
+
+  public var range: SourceRange
+
+  public var type: Type?
+
+  public init(operand: Expr, range: SourceRange) {
+    self.operand = operand
     self.range = range
   }
 

@@ -300,11 +300,15 @@ public struct MVSParser {
 
   lazy var arraySign = take(.lBracket)
     .then(sign)
+    .then(take(.comma))
+    .then(intExpr)
     .then(take(.rBracket))
     .map({ (tree) -> Sign in
-      let ((head, base), tail) = tree
+      let ((((head, base), _), countExpr), tail) = tree
+      let count = (countExpr as! IntExpr).value
       return ArraySign(
         base: base,
+        count: count,
         range: head.range.lowerBound ..< tail.range.upperBound)
     })
 

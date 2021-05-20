@@ -15,7 +15,7 @@
         "repositoryURL": "https://github.com/llvm-swift/LLVMSwift.git",
         "state": {
           "branch": "master",
-          "revision": "071246791bd677e869aba4be694ef1e4d789adfb",
+          "revision": "c0a77afeab065d75ec851b8dc64538f4ef796f23",
           "version": null
         }
       },

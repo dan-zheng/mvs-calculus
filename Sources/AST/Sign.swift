@@ -43,12 +43,15 @@ public struct ArraySign: Sign {
   /// The type signature of the array's elements.
   public var base: Sign
 
+  public var count: Int
+
   public var type: Type?
 
   public var range: SourceRange
 
-  public init(base: Sign, range: SourceRange) {
+  public init(base: Sign, count: Int, range: SourceRange) {
     self.base = base
+    self.count = count
     self.range = range
   }
 

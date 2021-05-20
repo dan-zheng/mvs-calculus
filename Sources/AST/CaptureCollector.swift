@@ -74,6 +74,10 @@ struct CaptureCollector: ExprVisitor {
       .merging(expr.body.accept(&self), uniquingKeysWith: merge(lhs:rhs:))
   }
 
+  mutating func visit(_ expr: inout GradientExpr) -> ExprResult {
+    return expr.operand.accept(&self)
+  }
+
   mutating func visit(_ expr: inout ErrorExpr) -> ExprResult {
     return [:]
   }

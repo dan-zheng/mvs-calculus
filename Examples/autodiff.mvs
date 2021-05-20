@@ -1,0 +1,56 @@
+struct Pair {
+  var x: Int
+  var y: Int
+} in
+
+struct ArrayPair {
+  var x: [Float,3]
+  var y: [Float,3]
+} in
+
+let id: ((Float, Float) -> Float) -> (Float, Float) -> Float =
+  (f: (Float, Float) -> Float) -> (Float, Float) -> Float {
+    f
+  } in
+
+let fn: (Float, Float) -> Float = (x: Float, y: Float) -> Float {
+  x + y
+} in
+
+let double: (Float) -> Float = (x: Float) -> Float {
+  x + x
+} in
+
+let timesFour: (Float) -> Float = (x: Float) -> Float {
+  x + x + x + x
+
+  // let y: Float = double(x) in
+  // y + y
+} in
+
+// let index: ([Float,3]) -> Float = (a: [Float,3]) -> Float {
+//   let x: Float = a[0] in
+//   x
+// } in
+
+let nestedIndex: (ArrayPair) -> Float = (p: ArrayPair) -> Float {
+  let x: Float = p.x[2] in
+  x
+} in
+
+let test: (inout Float) -> Float = (x: inout Float) -> Float {
+  x + x
+} in
+
+var p: Float = 2.0 in
+var q: Float = p in
+q = 8.0 in
+q
+
+// var p: Pair = Pair(2, 4) in
+// var q: Pair = p in
+// q.x = 8 in
+// q
+
+// gradient(double, 2.0)
+// gradient2(fn, 2.0, 3.0)

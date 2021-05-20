@@ -4,6 +4,7 @@
 
 # Xcode
 /.swiftpm
+*.xcodeproj
 
 # macOS
 .DS_Store

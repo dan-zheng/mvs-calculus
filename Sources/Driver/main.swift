@@ -2,13 +2,14 @@ import Foundation
 import ArgumentParser
 
 import AST
+import Autodiff
 import CodeGen
 import Parse
 import Sema
 
 struct MVS: ParsableCommand {
 
-  @Argument(help: "The source program.", transform: URL.init(fileURLWithPath:))
+  @ArgumentParser.Argument(help: "The source program.", transform: URL.init(fileURLWithPath:))
   var inputFile: URL
 
   @Option(help: "Wrap the program inside a benchmark.")
@@ -42,6 +43,48 @@ struct MVS: ParsableCommand {
     var emitter = try Emitter(mode: mode, shouldEmitPrint: !noPrint)
     let module = try emitter.emit(program: &program)
     module.dump()
+
+    /*
+    do {
+      print("LLVM module:")
+      let llvmModule = try emitter.emit(program: &program)
+      llvmModule.dump()
+
+      print("LLVM module (optimized):")
+      let llvmModuleOptimized = try emitter.emit(program: &program, optimize: true)
+      llvmModuleOptimized.dump()
+    }
+    */
+
+    // Convert the program to SSA.
+    print("Transforming expression to SSA:")
+    var ssaGenerator = InstructionGenerator()
+    ssaGenerator.visit(&program)
+    let ssaModule = ssaGenerator.module
+    print(ssaModule)
+
+    /*
+    let generator = SSAToExpressionGenerator()
+    let expr = generator.visit(ssaModule.findFunction("main")!)
+    print("Transformed expression:")
+    print(expr)
+
+    var transformedProgram = Program(types: [], entry: expr)
+    guard checker.visit(&transformedProgram) else {
+      fatalError("Could not type-check transformed program")
+    }
+    do {
+      print("Transformed LLVM module:")
+      let llvmModule = try emitter.emit(program: &transformedProgram)
+      llvmModule.dump()
+
+      /*
+      print("Transformed LLVM module (optimized):")
+      let llvmModuleOptimized = try emitter.emit(program: &transformedProgram, optimize: true)
+      llvmModuleOptimized.dump()
+      */
+    }
+    */
   }
 
 }
