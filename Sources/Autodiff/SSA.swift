@@ -12,9 +12,13 @@ extension HashableObject {
   }
 }
 
+/// A nested path reference.
 public struct NestedPath {
+  /// A path component: either a property name or an array index.
   public enum Component {
+    /// A property name.
     case name(String)
+    /// An array index.
     case index(Use)
   }
 
@@ -82,6 +86,7 @@ extension NestedPath: CustomStringConvertible {
   }
 }
 
+// A local variable: an argument or an instruction.
 public protocol Value {
   var type: Type { get }
   func makeUse() -> Use
@@ -116,11 +121,8 @@ extension Use {
       return inst.type
     case let .function(f):
       return f.type
-    // case let .intrinsic(op):
     case .intrinsic:
-      // return op.type
-      // return .unit
-      // TODO: FIXME
+      // TODO: Intrinsics are hardcoded to be binary numeric operations.
       return .func(params: [.float, .float], output: .float)
     }
   }
@@ -156,18 +158,12 @@ extension Use: TextOutputStreamable {
 }
 
 public class Argument: Value, HashableObject {
-// public struct Argument: Value, Hashable {
   public var name: String?
-  // TODO: Consider removing.
-  // public var mutability: MutabilityQualifier
   public var type: Type
   public unowned var parent: Function
 
   public init(name: String?, mutability: MutabilityQualifier, type: Type, parent: Function) {
-  // public init(name: String?, mutability: MutabilityQualifier, type: Type) {
     self.name = name
-    // TODO: Consider removing.
-    // self.mutability = mutability
     self.type = type
     self.parent = parent
   }
@@ -198,35 +194,7 @@ extension Argument {
   }
 }
 
-/*
 public class Module: HashableObject {
-  // TODO: Replace with ordered collection
-  public var functions: [String: Function]
-
-  public init(functions: [String: Function] = [:]) {
-    self.functions = functions
-  }
-
-  func addFunction(_ function: Function) {
-    guard !functions.keys.contains(function.name) else {
-      fatalError("Module already contains function '\(function.name)'")
-    }
-    functions[function.name] = function
-  }
-}
-
-extension Module: TextOutputStreamable {
-  public func write<Target: TextOutputStream>(to target: inout Target) {
-    for (_, function) in functions {
-      function.write(to: &target)
-      target.write("\n")
-    }
-  }
-}
-*/
-
-public class Module: HashableObject {
-  // TODO: Replace with ordered collection
   public var functions: [Function]
 
   public init(functions: [Function] = []) {
@@ -254,6 +222,7 @@ extension Module: TextOutputStreamable {
   }
 }
 
+/// An SSA function.
 public class Function: HashableObject {
   public var name: String
   public var arguments: [Argument]
@@ -423,7 +392,20 @@ public enum BooleanBinaryOp: Hashable {
 }
 
 extension NumericBinaryOp {
-  func callAsFunction(_ lhs: Literal, _ rhs: Literal) -> Literal {
+  var binaryOp: BinaryOp {
+    switch self {
+    case .add:
+      return .add
+    case .sub:
+      return .sub
+    case .mul:
+      return .mul
+    case .div:
+      return .div
+    }
+  }
+
+  func callAsFunction(_ lhs: EvaluatedValue, _ rhs: EvaluatedValue) -> EvaluatedValue {
     switch (lhs, rhs) {
     case let (.int(l), .int(r)):
       switch self {
@@ -465,7 +447,24 @@ extension NumericBinaryOp {
 }
 
 extension BooleanBinaryOp {
-  func callAsFunction(_ lhs: Literal, _ rhs: Literal) -> Literal {
+  var binaryOp: BinaryOp {
+    switch self {
+    case .eq:
+      return .eq
+    case .ne:
+      return .ne
+    case .lt:
+      return .lt
+    case .le:
+      return .le
+    case .ge:
+      return .ge
+    case .gt:
+      return .gt
+    }
+  }
+
+  func callAsFunction(_ lhs: EvaluatedValue, _ rhs: EvaluatedValue) -> EvaluatedValue {
     switch (lhs, rhs) {
     case let (.int(l), .int(r)):
       switch self {
@@ -531,6 +530,7 @@ public indirect enum InstructionKind {
 
   // Bindings
   case alloc(Type)
+  case `let`(Type, value: Use)
 
   case `return`(Use)
 }
@@ -582,6 +582,8 @@ extension InstructionKind {
       return type!
     case let .alloc(type):
       return type
+    case let .`let`(type, value: _):
+      return type
     case .assign, .accumulate, .return:
       return .unit
     }
@@ -622,6 +624,8 @@ extension InstructionKind {
       return [lhsBase, rhs] + lhsPath.operands
     case .alloc:
       return []
+    case let .`let`(_, value: v):
+      return [v]
     case let .return(use):
       return [use]
     }
@@ -637,14 +641,14 @@ extension Instruction {
 extension InstructionKind {
   public var mustWriteToMemory: Bool {
     switch self {
-    case .alloc, .assign, .accumulate:
+    case .alloc, .`let`, .assign, .accumulate:
       return true
     default:
       return false
     }
   }
 
-  public var isTerminator: Bool {
+  public var isReturn: Bool {
     switch self {
     case .return:
       return true
@@ -695,6 +699,8 @@ extension InstructionKind: TextOutputStreamable {
       target.write("\(lhsBase.identifier)\(lhsPath) += \(rhs)")
     case let .alloc(type):
       target.write("alloc \(type)")
+    case let .`let`(type, value: value):
+      target.write("init \(type) \(value)")
     case let .return(use):
       target.write("return \(use)")
     }
@@ -809,11 +815,13 @@ public class IRBuilder {
   @discardableResult
   func buildInstruction(_ kind: InstructionKind, name: String? = nil) -> Instruction {
     let inst = Instruction(name: name, kind: kind, parent: function)
+    // If insertion index is defined, insert at the index and advance it.
     if let index = insertionIndex {
       function.insert(inst, at: index)
-      // Advance the index.
       insertionIndex = index + 1
-    } else {
+    }
+    // Otherwise, append instruction to end of function.
+    else {
       function.append(inst)
     }
     return inst
@@ -827,27 +835,27 @@ public class IRBuilder {
   }
 }
 
-public indirect enum Literal {
+public indirect enum EvaluatedValue {
   case int(Int)
   case float(Double)
-  case array([Literal])
-  case `struct`(type: Type, properties: [String: Literal])
+  case array([EvaluatedValue])
+  case `struct`(type: Type, properties: [String: EvaluatedValue])
   case binaryFunction(BinaryOp)
 }
 
-extension Literal {
-  public static func zero(_ type: Type) -> Literal {
+extension EvaluatedValue {
+  public static func zero(_ type: Type) -> EvaluatedValue {
     switch type {
     case .int:
       return .int(0)
     case .float:
       return .float(0)
     case .struct(name: _, let props):
-      let properties = props.map { prop in (prop.name, Literal.zero(prop.type)) }
+      let properties = props.map { prop in (prop.name, EvaluatedValue.zero(prop.type)) }
       let propertiesDict = Dictionary(uniqueKeysWithValues: properties)
       return .struct(type: type, properties: propertiesDict)
     case .array(let elem, let count):
-      let zeroElement = Literal.zero(elem)
+      let zeroElement = EvaluatedValue.zero(elem)
       let zeroElements = Array(repeating: zeroElement, count: count)
       return .array(zeroElements)
     case .unit, .func, .inout, .error:
@@ -855,7 +863,7 @@ extension Literal {
     }
   }
 
-  public func at(_ path: NestedPath) -> Literal {
+  public func at(_ path: NestedPath) -> EvaluatedValue {
     guard let component = path.first else {
       return self
     }
@@ -881,7 +889,7 @@ extension Literal {
     }
   }
 
-  public func with(_ path: NestedPath, newValue: Literal) -> Literal {
+  public func with(_ path: NestedPath, newValue: EvaluatedValue) -> EvaluatedValue {
     guard let component = path.first else {
       return newValue
     }
@@ -913,8 +921,8 @@ extension Literal {
 }
 
 extension Function {
-  public func evaluated(in environment: [String: Literal] = [:], argumentValues: [Literal])
-    -> Literal
+  public func evaluated(in environment: [String: EvaluatedValue] = [:], argumentValues: [EvaluatedValue])
+    -> EvaluatedValue
   {
     var newEnvironment = environment
 
@@ -977,7 +985,9 @@ extension Function {
         let newLhsBaseValue = lhsBaseValue.with(lhsPath, newValue: newRhsValue)
         newEnvironment[lhsBase.identifier] = newLhsBaseValue
       case let .alloc(type):
-        newEnvironment[name] = Literal.zero(type)
+        newEnvironment[name] = EvaluatedValue.zero(type)
+      case let .`let`(_, value: value):
+        newEnvironment[name] = newEnvironment[value.identifier]!
       case let .return(use):
         let value = newEnvironment[use.identifier]!
         return value
@@ -1032,58 +1042,8 @@ public struct InstructionGenerator: ExprVisitor, PathVisitor {
   }
 
   public mutating func visit(_ program: inout Program) {
-    print("Program:")
-    print(program.entry)
     let body = program.entry.accept(&self)
     builder.buildInstruction(.return(body))
-
-    // NOTE: Start debug printing for autodiff.
-    if let doubleFunction = module.findFunction("double") {
-      let doubleGradient = gradient(doubleFunction)
-      /*
-      print("doubleGradient")
-      print(doubleGradient)
-      print(doubleGradient.evaluated(argumentValues: [.float(3)]))
-      */
-    }
-
-    if let timesFour = module.findFunction("timesFour") {
-      let timesFourGradient = gradient(timesFour)
-      /*
-      print("timesFourGradient")
-      print(timesFourGradient)
-      print(timesFourGradient.evaluated(argumentValues: [.float(3)]))
-      */
-    }
-
-    if let indexFunction = module.findFunction("index") {
-      let indexGradient = gradient(indexFunction)
-      /*
-      print("indexGradient")
-      print(indexGradient)
-      print(indexGradient.evaluated(argumentValues: [.array([.float(3),.float(3), .float(3)])]))
-      */
-    }
-
-    if let nestedIndexFunction = module.findFunction("nestedIndex") {
-      let nestedIndexGradient = gradient(nestedIndexFunction)
-      print("nestedIndexGradient")
-      print(nestedIndexGradient)
-      let structType: Type = .struct(
-        name: "ArrayPair",
-        props: [
-          .init(mutability: .var, name: "x", type: .array(elem: .float, count: 3)),
-          .init(mutability: .var, name: "y", type: .array(elem: .float, count: 3)),
-        ])
-      let arrayLiteral: Literal = .array([.float(3), .float(3), .float(3)])
-      let structValue: Literal = .struct(
-        type: structType,
-        properties: [
-          "x": arrayLiteral,
-          "y": arrayLiteral,
-        ])
-      print(nestedIndexGradient.evaluated(argumentValues: [structValue]))
-    }
   }
 
   public mutating func visit(_ expr: inout IntExpr) -> Use {
@@ -1152,11 +1112,13 @@ public struct InstructionGenerator: ExprVisitor, PathVisitor {
     // Handle calls to specific intrinsic functions.
     if let namePath = expr.callee as? NamePath {
       let name = namePath.name
-      // Check gradient operation.
+      // Handle gradient operation.
       if name == "gradient" || name == "gradient2" {
+        // Check that gradient call has at least one argument.
         guard case let .function(f) = arguments.first else {
           fatalError("Expected gradient call to have at least one argument")
         }
+        // Check that gradient operand has expected number of arguments.
         let expectedArgumentCount: Int
         switch name {
         case "gradient": expectedArgumentCount = 2
@@ -1164,11 +1126,18 @@ public struct InstructionGenerator: ExprVisitor, PathVisitor {
         default:
           fatalError("Unexpected gradient function name")
         }
-        assert(arguments.count == expectedArgumentCount,
-               "Expected \(name) call to have \(expectedArgumentCount) arguments; instead got \(arguments.count)")
+        assert(
+          arguments.count == expectedArgumentCount,
+          """
+          Expected \(name) call to have \(expectedArgumentCount) arguments; \
+          instead got \(arguments.count)
+          """
+        )
 
+        // Get gradient function and call it.
         let gradientFunction = gradient(f)
-        let result = %builder.buildInstruction(.call(.function(gradientFunction), Array(arguments.dropFirst())))
+        let result = %builder.buildInstruction(
+          .call(.function(gradientFunction), Array(arguments.dropFirst())))
         print("result: \(result)")
         print(builder.function)
         return result
@@ -1199,54 +1168,49 @@ public struct InstructionGenerator: ExprVisitor, PathVisitor {
     let initializer = expr.initializer.accept(&self)
     // Update the name of the lowered expression to the binding name.
     let name = expr.decl.name
-    /*
     switch initializer {
     case let .argument(arg):
       arg.name = name
-    case let .instruction(inst):
-      inst.name = name
     case let .function(f):
       f.name = name
-    case .intrinsic:
+    case .instruction, .intrinsic:
       break
     }
-    */
 
     // Update environment using the binding name.
-    // let assignInst = builder.buildInstruction(.assign(lhsBase: initializer, lhsPath: NestedPath(), rhs: initializer), name: name)
     guard let type = expr.initializer.type else {
       fatalError("Initializer expression does not have a type")
     }
 
     /*
-    print("BindingExpr: \(name)")
-    print("initializer: \(initializer), \(expr.initializer)")
-    */
-
     switch expr.decl.mutability {
     case .let:
-      environment[builder.function, default: intrinsicFunctionEnvironment][name] = initializer
+      environment[
+        builder.function, default: intrinsicFunctionEnvironment][name] = initializer
     case .var:
       let lhsBase = builder.buildInstruction(.alloc(type), name: name)
-      _ = builder.buildInstruction(.assign(lhsBase: %lhsBase, lhsPath: NestedPath(), rhs: initializer))
-      environment[builder.function, default: intrinsicFunctionEnvironment][name] = %lhsBase
+      _ = builder.buildInstruction(
+        .assign(lhsBase: %lhsBase, lhsPath: NestedPath(), rhs: initializer))
+      environment[
+        builder.function, default: intrinsicFunctionEnvironment][name] = %lhsBase
     }
-    
+    */
+
+    // Lower bindings as allocations followed by assignments.
     let lhsBase = builder.buildInstruction(.alloc(type), name: name)
-    _ = builder.buildInstruction(.assign(lhsBase: %lhsBase, lhsPath: NestedPath(), rhs: initializer))
-    environment[builder.function, default: intrinsicFunctionEnvironment][name] = %lhsBase
+    _ = builder.buildInstruction(
+      .assign(lhsBase: %lhsBase, lhsPath: NestedPath(), rhs: initializer))
+    environment[
+      builder.function, default: intrinsicFunctionEnvironment][name] = %lhsBase
     let body = expr.body.accept(&self)
-    print("body: \(body), \(expr.body)")
     return body
   }
 
   public mutating func visit(_ expr: inout AssignExpr) -> Use {
     let (lhsBase, lhsPath) = expr.lvalue.accept(pathVisitor: &self)
     let rhs = expr.rvalue.accept(&self)
-    print("AssignExpr")
-    print("lhsBase: \(lhsBase)")
-    print("rhs: \(rhs)")
-    _ = builder.buildInstruction(.assign(lhsBase: lhsBase, lhsPath: lhsPath, rhs: rhs))
+    _ = builder.buildInstruction(
+      .assign(lhsBase: lhsBase, lhsPath: lhsPath, rhs: rhs))
     return expr.body.accept(&self)
   }
 
@@ -1256,22 +1220,6 @@ public struct InstructionGenerator: ExprVisitor, PathVisitor {
 
   public mutating func visit(_ expr: inout NamePath) -> Use {
     let name = expr.name
-    // Check intrinsics.
-    /*
-    let intrinsicNames: Set<String> = ["add", "sub", "mul"]
-    if intrinsicNames.contains(name) {
-      let op: NumericBinaryOp
-      switch name {
-      case "add":
-        op = .add
-      case "sub":
-        op = .subtract
-      case "mul":
-        op = .multiply
-      }
-      return builder.buildInstruction(.numericBinary(op, <#T##Use#>, <#T##Use#>))
-    }
-    */
     // Look up name in the environment.
     guard let use = environment[builder.function]?[name] else {
       fatalError("Variable '\(name)' not found")
@@ -1339,22 +1287,15 @@ public struct InstructionGenerator: ExprVisitor, PathVisitor {
 
 private var gradientFunctionCache: [Function: Function] = [:]
 
-func gradient(_ function: Function) -> Function {
+/// Returns the functional gradient of `function`.
+public func gradient(_ function: Function) -> Function {
   // Look up gradient function in cache.
   if let gradientFunction = gradientFunctionCache[function] {
     return gradientFunction
   }
 
-  // Perform optimizations on original function.
-  /*
-  print("Before PathFolding:")
-  print(function)
-  */
+  // Perform preliminary optimizations on original function that are important for AD.
   _ = PathFolding.run(on: function)
-  /*
-  print("After PathFolding:")
-  print(function)
-  */
 
   let name = "\(function.name)_grad"
   // Compute the gradient function return type.
@@ -1419,7 +1360,7 @@ func gradient(_ function: Function) -> Function {
     print("Gradient transform for \(function.name): visiting instruction \(inst)")
     switch inst.kind {
     // Some instructions have no adjoints: integer/float literals, allocations, return.
-    case .int, .float, .alloc, .return:
+    case .int, .float, .alloc, .`let`, .return:
       break
 
     // Handle binary operations.
@@ -1603,7 +1544,7 @@ func gradient(_ function: Function) -> Function {
     //   ∂x1 += (∂y).x1
     //   ∂x2 += (∂y).x2
     //   ...
-    case .struct(let name, let type, let arguments):
+    case .struct:
       // TODO
       break
 
@@ -1612,7 +1553,7 @@ func gradient(_ function: Function) -> Function {
     //   base.p = x
     // Adjoint:
     //   ∂x += (∂base).p
-    case .assign(let lhsBase, let lhsPath, let rhs):
+    case .assign:
       // TODO
       break
 
@@ -1621,7 +1562,7 @@ func gradient(_ function: Function) -> Function {
     //   base.p += x
     // Adjoint:
     //   ∂x += ∂x + (∂base).p
-    case .accumulate(let lhsBase, let lhsPath, let rhs):
+    case .accumulate:
       // TODO
       break
     }
@@ -1650,7 +1591,6 @@ extension Type {
     let dummyRange: Range<String.Index> = ("".startIndex..<"".endIndex)
     switch self {
     case .unit:
-      // return TypeDeclRefSign(name: "Unit", range: dummyRange)
       return TypeDeclRefSign(name: "Int", range: dummyRange)
     case .int:
       return TypeDeclRefSign(name: "Int", range: dummyRange)
@@ -1674,21 +1614,24 @@ extension Type {
   }
 }
 
-/*
 /// Translates lower-level SSA instructions to mvs expressions.
 public struct SSAToExpressionGenerator {
   public init() {}
 
   /// Transforms a nullary function into an expression representing its body.
   public func visit(_ function: Function) -> Expr {
-    precondition(function.arguments.isEmpty, "Function must take no arguments")
-
     let dummyRange: Range<String.Index> = ("".startIndex..<"".endIndex)
-    var environment: [String: Expr] = [:]
 
-    var finalExpression: Expr? = nil
+    var parameters: [ParamDecl] = []
+    for arg in function.arguments {
+      let paramDecl = ParamDecl(
+        name: arg.printedName, mutability: .let, sign: arg.type.toSign(),
+        range: dummyRange)
+      parameters.append(paramDecl)
+    }
 
-    /// Converts a path to an expression.
+    var environment: [Use: Expr] = [:]
+
     func pathToExpression(_ baseName: String, _ path: NestedPath) -> Path {
       var pathExpr: Path = NamePath(name: baseName, range: dummyRange)
       for component in path {
@@ -1696,7 +1639,7 @@ public struct SSAToExpressionGenerator {
         case let .name(name):
           pathExpr = PropPath(base: pathExpr, name: name, range: dummyRange)
         case let .index(i):
-          guard let indexExpr = environment[i.identifier] else {
+          guard let indexExpr = environment[i] else {
             fatalError("Could not find index argument in environment")
           }
           pathExpr = ElemPath(base: pathExpr, index: indexExpr, range: dummyRange)
@@ -1711,14 +1654,16 @@ public struct SSAToExpressionGenerator {
         return IntExpr(value: 0, range: dummyRange)
       case .float:
         return FloatExpr(value: 0, range: dummyRange)
-      case .struct(name: let name, props: let props):
+      case .struct(let name, let props):
         let zeroExprs = props.map { zeroExpr($0.type) }
         return StructExpr(name: name, args: zeroExprs, range: dummyRange)
-      case .array(elem: let elem, count: let count):
+      case .array(let elem, let count):
         let zeroExprs = Array(repeating: zeroExpr(elem), count: count)
         return ArrayExpr(elems: zeroExprs, range: dummyRange)
       case .func:
-        fatalError("Function type \(type) cannot be converted to zero")
+        // Use a dummy zero value for functions.
+        return IntExpr(value: 0, range: dummyRange)
+        // fatalError("Function type \(type) cannot be converted to zero")
       case .inout:
         fatalError("Inout type \(type) cannot be converted to zero")
       case .error:
@@ -1726,96 +1671,127 @@ public struct SSAToExpressionGenerator {
       }
     }
 
-    for inst in function.instructions {
-      let name = (%inst).identifier
-      switch inst.kind {
-      case let .int(i):
-        let intExpr = IntExpr(value: i, range: dummyRange)
-        environment[name] = intExpr
-      case let .float(f):
-        let floatExpr = FloatExpr(value: f, range: dummyRange)
-        environment[name] = floatExpr
-      case let .binaryOp(op, argumentType: _):
-        let opExpr = OperExpr(kind: op, range: dummyRange)
-        environment[name] = opExpr
-      case let .numericBinary(op, lhs, rhs):
-        break
-      case .path(let base, let path):
-        let pathName = base.identifier
-        var pathExpr: Expr = NamePath(name: pathName, range: dummyRange)
-        for component in path {
-          switch component {
-          case let .name(name):
-            pathExpr = PropPath(base: pathExpr, name: name, range: dummyRange)
-          case let .index(i):
-            guard let indexExpr = environment[i.identifier] else {
-              fatalError("Could not find index argument in environment")
-            }
-            pathExpr = ElemPath(base: pathExpr, index: indexExpr, range: dummyRange)
-          }
-        }
-        environment[pathName] = pathExpr
-      case let .call(callee, arguments):
-        guard case let .function(f) = callee else {
-          fatalError("Callee must be a function")
-        }
-        let functionExpr = visit(f)
-        let argumentExprs = arguments.map { arg -> Expr in
-          guard let expr = environment[arg.identifier] else {
-            fatalError("Could not find argument in environment")
-          }
-          return expr
-        }
-        let callExpr = CallExpr(callee: functionExpr, args: argumentExprs, range: dummyRange)
-        environment[name] = callExpr
-      case let .array(elements):
-        let elementExprs = elements.map { element -> Expr in
-          guard let expr = environment[element.identifier] else {
-            fatalError("Could not find element in environment")
-          }
-          return expr
-        }
-        let arrayExpr = ArrayExpr(elems: elementExprs, range: dummyRange)
-        environment[name] = arrayExpr
-      case .struct(let structName, _, let arguments):
-        let argumentExprs = arguments.map { arg -> Expr in
-          guard let expr = environment[arg.identifier] else {
-            fatalError("Could not find argument in environment")
-          }
-          return expr
-        }
-        let structExpr = StructExpr(name: structName, args: argumentExprs, range: dummyRange)
-        print("HELLO STRUCT EXPR NAME: \(name)")
-        environment[name] = structExpr
-      case .assign(let lhsBase, let lhsPath, let rhs):
-        let lhsPath = pathToExpression(lhsBase.identifier, lhsPath)
-        guard let rhsExpr = environment[rhs.identifier] else {
-          fatalError("Could not find rhs in environment")
-        }
-        print("Found assign instruction:")
-        let dummyExpr = IntExpr(value: 1337, range: dummyRange)
-        let assignExpr = AssignExpr(lvalue: lhsPath, rvalue: rhsExpr, body: dummyExpr, range: dummyRange)
-        environment[name] = assignExpr
-      case .accumulate(let lhsBase, let lhsPath, let rhs):
-        break
-      case let .alloc(type):
-        let zeroExpr = zeroExpr(type)
-        print("alloc name: \(name), \(inst.name)")
-        environment[name] = zeroExpr
-      case let .return(value):
-        print("Return found: \(value.identifier)")
-        guard let returnExpr = environment[value.identifier] else {
-          fatalError("Returned expression must be defined")
-        }
-        let returnPath = NamePath(name: value.identifier, range: dummyRange)
-        // functionBodyExpr = returnExpr
-        // functionBodyExpr = returnPath
+    var symbolCounter: Int = 0
+    func gensym() -> String {
+      defer { symbolCounter += 1 }
+      return "x\(symbolCounter)"
+    }
+
+    func typeToSign(_ type: Type) -> Sign {
+      switch type {
+      case .unit:
+        return TypeDeclRefSign(name: "Unit", range: dummyRange)
+      case .int:
+        return TypeDeclRefSign(name: "Int", range: dummyRange)
+      case .float:
+        return TypeDeclRefSign(name: "Float", range: dummyRange)
+      case .struct(name: let name, props: _):
+        return TypeDeclRefSign(name: name, range: dummyRange)
+      case .array(elem: let elem, count: let count):
+        let elemSign = typeToSign(elem)
+        return ArraySign(base: elemSign, count: count, range: dummyRange)
+      case .func(params: let params, output: let output):
+        let paramSigns = params.map { $0.toSign() }
+        let outputSign = output.toSign()
+        return FuncSign(params: paramSigns, output: outputSign, range: dummyRange)
+      case .inout(base: let base):
+        return InoutSign(base: typeToSign(base), range: dummyRange)
+      case .error:
+        return ErrorSign(range: dummyRange)
       }
     }
+
+    func generateExpression(_ index: Int) -> Expr {
+      let instruction = function.instructions[index]
+      print("generateExpression index \(index): \(instruction)")
+      if index == function.instructions.count - 1 {
+        assert(instruction.kind.isReturn, "Expected last instruction to be a return")
+        guard case let .return(value) = instruction.kind else {
+          fatalError("Badness")
+        }
+        return NamePath(name: "p", range: dummyRange)
+      } else {
+        let name = instruction.name ?? gensym()
+
+        // Create a binding expression whose body is in the next instruction
+        // in the function.
+        let body = generateExpression(index + 1)
+
+        // Compute the initializer of the binding expression.
+        let initializer: Expr
+        switch instruction.kind {
+        case let .int(i):
+          initializer = IntExpr(value: i, range: dummyRange)
+        case let .float(f):
+          initializer = FloatExpr(value: f, range: dummyRange)
+          environment[%instruction] = initializer
+          print("Visiting float expression")
+          print(environment)
+        case .binaryOp:
+          fatalError("Binary op not yet supported")
+        case let .numericBinary(op, lhs, rhs):
+          guard let lhsExpr = environment[lhs] else {
+            fatalError("Could not find \(lhs) in environment: \(environment)")
+          }
+          guard let rhsExpr = environment[rhs] else {
+            fatalError("Could not find \(rhs) in environment: \(environment)")
+          }
+          let operExpr = OperExpr(kind: op.binaryOp, range: dummyRange)
+          initializer = InfixExpr(lhs: lhsExpr, rhs: rhsExpr, oper: operExpr, range: dummyRange)
+        case let .path(base: base, path: path):
+          return pathToExpression(base.identifier, path)
+        case let .call(callee, arguments):
+          fatalError()
+        // case let .array(elements):
+        case .array(_):
+          fatalError()
+        case .struct(name: let name, type: let type, arguments: let arguments):
+          fatalError()
+        case .assign(lhsBase: let lhsBase, lhsPath: let lhsPath, rhs: let rhs):
+          let lhsPath = pathToExpression(lhsBase.identifier, lhsPath)
+          print("environment: \(environment)")
+          guard let rhsExpr = environment[rhs] else {
+            fatalError("Could not find \(rhs) in environment: \(environment)")
+          }
+          let assignExpr = AssignExpr(
+            lvalue: lhsPath, rvalue: rhsExpr, body: body, range: dummyRange)
+          return assignExpr
+        case .accumulate(lhsBase: let lhsBase, lhsPath: let lhsPath, rhs: let rhs):
+          fatalError()
+        case let .alloc(type):
+          initializer = zeroExpr(type)
+        case let .`let`(type, value):
+          /*
+          let bindingDecl = BindingDecl(
+            mutability: .let, name: name, sign: typeToSign(instruction.type),
+            range: dummyRange)
+          let bindingExpr = BindingExpr(
+            decl: bindingDecl, initializer: value, body: body,
+            range: dummyRange)
+          return bindingExpr
+          */
+          fatalError()
+        case .return(_):
+          fatalError()
+        }
+        environment[%instruction] = initializer
+
+        let bindingDecl = BindingDecl(
+          mutability: .let, name: name, sign: typeToSign(instruction.type),
+          range: dummyRange)
+        let bindingExpr = BindingExpr(
+          decl: bindingDecl, initializer: initializer, body: body,
+          range: dummyRange)
+        return bindingExpr
+      }
+    }
+
+    let finalExpression = generateExpression(0)
+    return finalExpression
   }
 }
-*/
 
+/*
 /// Translates lower-level SSA instructions to mvs expressions.
 public struct SSAToExpressionGenerator {
   public init() {}
@@ -1865,19 +1841,25 @@ public struct SSAToExpressionGenerator {
         return IntExpr(value: 0, range: dummyRange)
       case .float:
         return FloatExpr(value: 0, range: dummyRange)
-      case .struct(name: let name, props: let props):
+      case .struct(let name, let props):
         let zeroExprs = props.map { zeroExpr($0.type) }
         return StructExpr(name: name, args: zeroExprs, range: dummyRange)
-      case .array(elem: let elem, count: let count):
+      case .array(let elem, let count):
         let zeroExprs = Array(repeating: zeroExpr(elem), count: count)
         return ArrayExpr(elems: zeroExprs, range: dummyRange)
       case .func:
-        fatalError("Function type \(type) cannot be converted to zero")
+        // Use a dummy zero value for functions.
+        return IntExpr(value: 0, range: dummyRange)
+        // fatalError("Function type \(type) cannot be converted to zero")
       case .inout:
         fatalError("Inout type \(type) cannot be converted to zero")
       case .error:
         fatalError("Error type \(type) cannot be converted to zero")
       }
+    }
+
+    func generateExpression(_ index: Int) -> Expr {
+
     }
 
     // let returnType = function.returnType.toSign()
@@ -1894,7 +1876,6 @@ public struct SSAToExpressionGenerator {
       case let .binaryOp(op, argumentType: _):
         let opExpr = OperExpr(kind: op, range: dummyRange)
         environment[name] = opExpr
-      // case let .numericBinary(op, lhs, rhs):
       case .numericBinary:
         fatalError("Handle numeric binary operations")
       case .path(let base, let path):
@@ -1906,7 +1887,7 @@ public struct SSAToExpressionGenerator {
             pathExpr = PropPath(base: pathExpr, name: name, range: dummyRange)
           case let .index(i):
             guard let indexExpr = environment[i.identifier] else {
-              fatalError("Could not find index argument in environment")
+              fatalError("Could not find index argument in environment: \(i.identifier)")
             }
             pathExpr = ElemPath(base: pathExpr, index: indexExpr, range: dummyRange)
           }
@@ -1919,7 +1900,7 @@ public struct SSAToExpressionGenerator {
         let functionExpr = visit(f)
         let argumentExprs = arguments.map { arg -> Expr in
           guard let expr = environment[arg.identifier] else {
-            fatalError("Could not find argument in environment")
+            fatalError("Could not find argument in environment: \(arg.identifier)")
           }
           return expr
         }
@@ -1928,7 +1909,7 @@ public struct SSAToExpressionGenerator {
       case let .array(elements):
         let elementExprs = elements.map { element -> Expr in
           guard let expr = environment[element.identifier] else {
-            fatalError("Could not find element in environment")
+            fatalError("Could not find element in environment: \(element.identifier)")
           }
           return expr
         }
@@ -1937,7 +1918,7 @@ public struct SSAToExpressionGenerator {
       case let .struct(structName, _, arguments):
         let argumentExprs = arguments.map { arg -> Expr in
           guard let expr = environment[arg.identifier] else {
-            fatalError("Could not find argument in environment")
+            fatalError("Could not find argument in environment: \(arg.identifier)")
           }
           return expr
         }
@@ -1947,12 +1928,14 @@ public struct SSAToExpressionGenerator {
       case let .assign(lhsBase, lhsPath, rhs):
         let lhsPath = pathToExpression(lhsBase.identifier, lhsPath)
         guard let rhsExpr = environment[rhs.identifier] else {
-          fatalError("Could not find rhs in environment")
+          print(environment)
+          fatalError("Could not find rhs in environment: \(rhs.identifier)")
         }
         print("Found assign instruction:")
         let dummyExpr = IntExpr(value: 1337, range: dummyRange)
         // TODO: replace `dummyExpr` with a real body representing the rest of the program.
-        let assignExpr = AssignExpr(lvalue: lhsPath, rvalue: rhsExpr, body: dummyExpr, range: dummyRange)
+        let assignExpr = AssignExpr(
+          lvalue: lhsPath, rvalue: rhsExpr, body: dummyExpr, range: dummyRange)
         environment[name] = assignExpr
       case let .accumulate(lhsBase, lhsPath, rhs):
         let lhsPath = pathToExpression(lhsBase.identifier, lhsPath)
@@ -1964,7 +1947,8 @@ public struct SSAToExpressionGenerator {
         // TODO: replace AssignExpr with a real accumulation operation.
         // TODO: need to sequence accumulation into other expressions to make sure they happen.
         // TODO: replace `dummyExpr` with a real body representing the rest of the program.
-        let assignExpr = AssignExpr(lvalue: lhsPath, rvalue: rhsExpr, body: dummyExpr, range: dummyRange)
+        let assignExpr = AssignExpr(
+          lvalue: lhsPath, rvalue: rhsExpr, body: dummyExpr, range: dummyRange)
         environment[name] = assignExpr
       case let .alloc(type):
         let zeroExpr = zeroExpr(type)
@@ -1975,13 +1959,24 @@ public struct SSAToExpressionGenerator {
         // TODO: replace `dummyExpr` with a real body representing the rest of the program.
         let assignExpr = AssignExpr(lvalue: NamePath(name: name, range: dummyRange), rvalue: zeroExpr, body: dummyExpr, range: dummyRange)
         */
-        print("alloc name: \(name), \(inst.name)")
-        environment[name] = zeroExpr
+        print("alloc name: \(name), \(String(describing: inst.name))")
+        // environment[name] = zeroExpr
+        /*
+        let bindingDecl = BindingDecl(
+          mutability: .var, name: name,
+          sign: TypeDeclRefSign(name: "Float", range: dummyRange),
+          range: dummyRange)
+        let bindingExpr = BindingExpr(
+          decl: bindingDecl, initializer: expr, body: dummyExpr,
+          range: dummyRange)
+        */
+        environment[name] = bindingExpr
       case let .return(value):
         print("Return found: \(value.identifier)")
         guard let returnExpr = environment[value.identifier] else {
           fatalError("Returned expression must be defined")
         }
+        _ = returnExpr
         let returnPath = NamePath(name: value.identifier, range: dummyRange)
         // functionBodyExpr = returnExpr
         functionBodyExpr = returnPath
@@ -2007,6 +2002,7 @@ public struct SSAToExpressionGenerator {
         print("Instruction real name: \(realName), will create dummy binding")
         let dummyExpr = IntExpr(value: 1337, range: dummyRange)
         // TODO: Choose between let and var mutability.
+        // Note: do not hardcode Float type.
         let bindingDecl = BindingDecl(
           mutability: .var, name: name,
           sign: TypeDeclRefSign(name: "Float", range: dummyRange),
@@ -2055,6 +2051,7 @@ public struct SSAToExpressionGenerator {
     guard let lastExpression = lastExpression else {
       fatalError("We failed to find the expression")
     }
+    _ = lastExpression
 
     guard let functionBodyExpr = functionBodyExpr else {
       fatalError("Function body expression must be defined if return instruction is visited")
@@ -2094,3 +2091,4 @@ public struct SSAToExpressionGenerator {
     // return lastExpression
   }
 }
+*/

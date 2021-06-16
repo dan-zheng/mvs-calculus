@@ -63,7 +63,51 @@ struct MVS: ParsableCommand {
     let ssaModule = ssaGenerator.module
     print(ssaModule)
 
-    /*
+    do {
+      // NOTE: Start debug printing for autodiff.
+      if let doubleFunction = ssaModule.findFunction("double") {
+        let doubleGradient = gradient(doubleFunction)
+        print("doubleGradient")
+        print(doubleGradient)
+        print(doubleGradient.evaluated(argumentValues: [.float(3)]))
+      }
+
+      if let timesFour = ssaModule.findFunction("timesFour") {
+        let timesFourGradient = gradient(timesFour)
+        print("timesFourGradient")
+        print(timesFourGradient)
+        print(timesFourGradient.evaluated(argumentValues: [.float(3)]))
+      }
+
+      if let indexFunction = ssaModule.findFunction("index") {
+        let indexGradient = gradient(indexFunction)
+        print("indexGradient")
+        print(indexGradient)
+        print(indexGradient.evaluated(argumentValues: [.array([.float(3),.float(3), .float(3)])]))
+      }
+
+      if let nestedIndexFunction = ssaModule.findFunction("nestedIndex") {
+        let nestedIndexGradient = gradient(nestedIndexFunction)
+        print("nestedIndexGradient")
+        print(nestedIndexGradient)
+        let structType: Type = .struct(
+          name: "ArrayPair",
+          props: [
+            .init(mutability: .var, name: "x", type: .array(elem: .float, count: 3)),
+            .init(mutability: .var, name: "y", type: .array(elem: .float, count: 3)),
+          ])
+        let arrayLiteral: EvaluatedValue = .array([.float(3), .float(3), .float(3)])
+        let structValue: EvaluatedValue = .struct(
+          type: structType,
+          properties: [
+            "x": arrayLiteral,
+            "y": arrayLiteral,
+          ])
+        print(nestedIndexGradient.evaluated(argumentValues: [structValue]))
+      }
+    }
+
+    print("Transforming SSA back to expression:")
     let generator = SSAToExpressionGenerator()
     let expr = generator.visit(ssaModule.findFunction("main")!)
     print("Transformed expression:")
@@ -73,6 +117,7 @@ struct MVS: ParsableCommand {
     guard checker.visit(&transformedProgram) else {
       fatalError("Could not type-check transformed program")
     }
+    /*
     do {
       print("Transformed LLVM module:")
       let llvmModule = try emitter.emit(program: &transformedProgram)
@@ -86,7 +131,6 @@ struct MVS: ParsableCommand {
     }
     */
   }
-
 }
 
 MVS.main()

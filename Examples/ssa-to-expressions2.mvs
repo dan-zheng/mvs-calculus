@@ -1,0 +1,4 @@
+var p: Float = 2.0 in
+var q: Float = p in
+q = 8.0 in
+q

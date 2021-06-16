@@ -40,7 +40,7 @@ public struct DeadCodeElimination: TransformPass {
     /// If instruction is not trivially dead, change nothing.
     guard dfg.successors(of: inst).isEmpty,
       sideEffectInfo[inst] == .none,
-      !inst.kind.isTerminator
+      !inst.kind.isReturn
     else { return false }
     /// Eliminate
     print("About to remove instruction: \(inst)")
@@ -55,7 +55,7 @@ public struct DeadCodeElimination: TransformPass {
     for case let .instruction(usee) in inst.operands
     where dfg.successors(of: usee).isEmpty
       && sideEffectInfo[usee] == .none
-      && !inst.kind.isTerminator
+      && !inst.kind.isReturn
     {
       workList.append(usee)
     }

@@ -73,7 +73,7 @@ public struct SideEffectAnalysis: AnalysisPass {
           // Call within the same module.
           sameModuleCalls.append((function, callee))
         case .call:
-          // External call: we make conservative decision.
+          // External call: be conservative.
           props = .all
         default:
           break
